@@ -1,101 +1,118 @@
-from flask import Flask,request,jsonify
-from flask_json_schema import JsonSchema, JsonValidationError
+from flask import Flask, request, jsonify
 from uuid import uuid4
 
 app = Flask(__name__)
-schema = JsonSchema(app)
-
-InvoiceHeader = []
-InvoiceItems = []
-InvoiceBillSundry = []
 
 
+invoices = []
+invoice_number_counter = 1 
 InvoiceHeader_Schema = {
     'properties': {
-        'Id' : { 'type': 'uuid' },
-        'Date':{ 'type': 'string' },
-        'InvoiceNumber':{ 'type': 'number' },
-        'CustomerName':{ 'type': 'string' },
-        'BillingAddress':{ 'type': 'string' },
-        'ShippingAddress':{ 'type': 'string' },
-        'GSTIN' :{ 'type': 'string' },
-        'TotalAmount' : { 'type': 'number' },
+        'Id': {'type': 'uuid'},
+        'Date': {'type': 'string'},
+        'InvoiceNumber': {'type': 'number'},
+        'CustomerName': {'type': 'string'},
+        'TotalAmount': {'type': 'number'},
     }
 }
+
 InvoiceItems_Schema = {
     'properties': {
-        'Id' : { 'type': 'uuid' },
-        'itemName': { 'type': 'string' },
-        'Quantity': { 'type': 'decimal' },
-        'Price': { 'type': 'decimal' },
-        'Amount': { 'type': 'decimal' },
-
-    }
-}
-InvoiceBillSundry_Schema = {
-    'properties': {
-        'Id' : { 'type': 'uuid' },
-        'billSundryName': { 'type': 'decimal' },
-        'Amount': { 'type': 'decimal' },
+        'Id': {'type': 'uuid'},
+        'itemName': {'type': 'string'},
+        'Quantity': {'type': 'decimal'},
+        'Price': {'type': 'decimal'},
+        'Amount': {'type': 'decimal'},
     }
 }
 
-@app.route('/createItem',methods=['POST'])
-def createitem():
+@app.route('/invoices', methods=['POST'])
+def create_invoice():
     data = request.get_json()
-    if(data.itemName == "" or data.Quantity == "" or data.Price == ""):
-        return "All Feilds are required"
-    
-    newItem = {
-        'Id' : str(uuid.uuid4()),
-        'itemName' : (data.itemName),
-        "Quantity" : float(data.Quantity),
-        "Price" : float(data.Price),
-        'Amount' : (data.itemName) * (data.Price)
+    date = data.get('Date')
+    customer_name = data.get('CustomerName')
+    items_data = data.get('InvoiceItems', [])
+
+
+    if not all([date, customer_name]):
+        return jsonify({"error": "Date and CustomerName are required."}), 400
+
+    items = []
+    for item_data in items_data:
+        quantity = item_data.get('Quantity')
+        price = item_data.get('Price')
+        if quantity <= 0 or price <= 0:
+            return jsonify({"error": "Price and Quantity must be greater than zero."}), 400
+        item = {
+            'Id': str(uuid4()),
+            'itemName': item_data['itemName'],
+            'Quantity': quantity,
+            'Price': price,
+            'Amount': quantity * price,
+        }
+        items.append(item)
+
+
+    global invoice_number_counter
+    invoice = {
+        'Id': str(uuid4()),
+        'Date': date,
+        'InvoiceNumber': invoice_number_counter,
+        'CustomerName': customer_name,
+        'TotalAmount': sum(item['Amount'] for item in items),
+        'InvoiceItems': items,
     }
-    InvoiceItems.append({newItem.Id : newItem})
-    return "New Item is added Sucessfully"
+    invoice_number_counter += 1
+    invoices.append(invoice)
 
+    return jsonify({"message": "Invoice created successfully.", "invoice": invoice}), 201
 
-# @app.route('/updateItem',methods=['POST'])
-# def updateitem():
-#     data = request.get_json()
-#     if(data.itemName == "" or data.Quantity == '' or data.Price == ''):
-#         return "All Feilds are required"
-    
-#     newItem = {
-#         'Id' : str(uuid.uuid4()),
-#         'itemName' : data.itemName,
-#         "Quantity" : data.Quantity,
-#         "Price" : data.Price,
-#         'Amount' : (data.itemName) * (data.Price)
-#     }
-#     InvoiceItems.append(newItem)
-#     return "New Item is added Sucessfully"
-    
+@app.route('/invoices/<invoice_id>', methods=['PUT'])
+def update_invoice(invoice_id):
+    data = request.get_json()
+    for invoice in invoices:
+        if invoice['Id'] == invoice_id:
+  
+            invoice['Date'] = data.get('Date', invoice['Date'])
+            invoice['CustomerName'] = data.get('CustomerName', invoice['CustomerName'])
 
+            items = []
+            for item_data in data.get('InvoiceItems', []):
+                quantity = item_data.get('Quantity')
+                price = item_data.get('Price')
+                if quantity <= 0 or price <= 0:
+                    return jsonify({"error": "Price and Quantity must be greater than zero."}), 400
+                item = {
+                    'Id': str(uuid4()),
+                    'itemName': item_data['itemName'],
+                    'Quantity': quantity,
+                    'Price': price,
+                    'Amount': quantity * price,
+                }
+                items.append(item)
+            
+            invoice['InvoiceItems'] = items
+            invoice['TotalAmount'] = sum(item['Amount'] for item in items)  
+            return jsonify({"message": "Invoice updated successfully.", "invoice": invoice}), 200
 
-@app.route('/deleteItem',methods=['POST'])
-def deleteitem(Itemid):
-    if(Itemid not in InvoiceItems):
-        return "Invalid Itemid"
-    
-    deletedId = ""
-    for item in InvoiceItems:
-        if item.Id == Itemid:
-            deletedId = Itemid
-    
-    if(deletedId == ''):
-        return "Item not found"
-    InvoiceItems.remove(deletedId)
-    return "successfully Item deleted"
+    return jsonify({"error": "Invoice not found."}), 404
 
+@app.route('/invoices/<invoice_id>', methods=['DELETE'])
+def delete_invoice(invoice_id):
+    global invoices
+    invoices = [invoice for invoice in invoices if invoice['Id'] != invoice_id]
+    return jsonify({"message": "Invoice deleted successfully."}), 200
 
+@app.route('/invoices/<invoice_id>', methods=['GET'])
+def retrieve_invoice(invoice_id):
+    for invoice in invoices:
+        if invoice['Id'] == invoice_id:
+            return jsonify(invoice), 200
+    return jsonify({"error": "Invoice not found."}), 404
 
-@app.route('/getItems',methods=['GET'])
-def getitem():
-    return jsonify(InvoiceItems)
-
+@app.route('/invoices', methods=['GET'])
+def list_invoices():
+    return jsonify(invoices), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
